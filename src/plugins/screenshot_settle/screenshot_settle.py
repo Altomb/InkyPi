@@ -28,9 +28,15 @@ class ScreenshotSettle(BasePlugin):
             dimensions = dimensions[::-1]
 
         settle_seconds = self._parse_settle_seconds(settings.get('settle_seconds'))
+        custom_css = settings.get('custom_css') or ''
         logger.info(f"Taking screenshot of url: {url} (settling {settle_seconds:g}s)")
 
-        image = take_settled_screenshot(url, dimensions, settle_seconds=settle_seconds)
+        image = take_settled_screenshot(
+            url,
+            dimensions,
+            settle_seconds=settle_seconds,
+            custom_css=custom_css,
+        )
 
         if not image:
             raise RuntimeError("Failed to take screenshot, please check logs.")

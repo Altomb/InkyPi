@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -33,3 +34,11 @@ class TestParseSettleSeconds:
 def test_missing_browser_returns_no_image(monkeypatch):
     monkeypatch.setattr(cdp_screenshot, "find_browser", lambda: None)
     assert cdp_screenshot.take_settled_screenshot("http://example.test/", (800, 480)) is None
+
+
+def test_custom_css_is_encoded_safely():
+    css = 'a::after { content: "</style>\\n\\t"; }\n/* comment */'
+    script = cdp_screenshot._custom_css_script(css)
+    encoded = script.split("var css = ", 1)[1].split(";\n", 1)[0]
+    assert json.loads(encoded) == css
+    assert cdp_screenshot.STYLE_ELEMENT_ID in script

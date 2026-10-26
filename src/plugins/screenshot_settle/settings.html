@@ -10,6 +10,15 @@
 </div>
 
 <div class="form-group">
+    <label for="custom_css" class="form-label">Custom CSS (optional):</label>
+    <textarea id="custom_css" name="custom_css" class="form-input" rows="8" spellcheck="false"
+              style="font-family: monospace; resize: vertical;"
+              placeholder="/* Example: hide a section you do not want on the display */
+footer { display: none; }"></textarea>
+    <span style="color: var(--text-primary);">CSS added to the page after it loads. It is applied last, so it overrides the page's own rules; use <code>!important</code> for rules the page sets inline or with higher specificity.</span>
+</div>
+
+<div class="form-group">
     <span style="color: var(--text-primary);">Warning: Do not run with untrusted URLs, as it may pose a security risk. This may also fail if the website takes too long to load.</span>
 </div>
 
@@ -20,6 +29,9 @@
             document.getElementById('url').value = pluginSettings.url;
             if (pluginSettings.settle_seconds !== undefined && pluginSettings.settle_seconds !== '') {
                 document.getElementById('settle_seconds').value = pluginSettings.settle_seconds;
+            }
+            if (pluginSettings.custom_css) {
+                document.getElementById('custom_css').value = pluginSettings.custom_css;
             }
         }
     });

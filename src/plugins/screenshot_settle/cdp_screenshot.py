@@ -206,7 +206,44 @@ def _wait_for_page_target(port, timeout=DEVTOOLS_START_TIMEOUT):
     return None
 
 
-def take_settled_screenshot(target, dimensions, settle_seconds=5):
+STYLE_ELEMENT_ID = "inkypi-screenshot-settle-style"
+
+
+def _custom_css_script(css):
+    """Return JavaScript that installs (or refreshes) a style element.
+
+    The CSS is JSON-encoded so quotes, newlines and backslashes cannot break
+    out of the script. Running it again at capture time re-appends the element,
+    so it wins the cascade over stylesheets the page loaded later.
+    """
+    return (
+        "(function () {\n"
+        f"  var css = {json.dumps(css)};\n"
+        f"  var id = {json.dumps(STYLE_ELEMENT_ID)};\n"
+        "  function apply() {\n"
+        "    var parent = document.head || document.documentElement;\n"
+        "    if (!parent) { return; }\n"
+        "    var style = document.getElementById(id);\n"
+        "    if (!style) {\n"
+        "      style = document.createElement('style');\n"
+        "      style.id = id;\n"
+        "    }\n"
+        "    style.textContent = css;\n"
+        "    parent.appendChild(style);\n"
+        "  }\n"
+        "  if (document.documentElement) { apply(); }\n"
+        "  document.addEventListener('DOMContentLoaded', apply);\n"
+        "})();"
+    )
+
+
+def _apply_custom_css(socket_connection, css):
+    socket_connection.command("Runtime.evaluate", {"expression": _custom_css_script(css)})
+    # Give the engine a moment to apply the new rules and repaint.
+    time.sleep(0.2)
+
+
+def take_settled_screenshot(target, dimensions, settle_seconds=5, custom_css=None):
     """Screenshot target after its content has had time to settle.
 
     Args:
@@ -214,10 +251,15 @@ def take_settled_screenshot(target, dimensions, settle_seconds=5):
         dimensions: (width, height) tuple for the viewport.
         settle_seconds: wall-clock time to wait after the load event before
             capturing. Clamped to 0..30 by the caller.
+        custom_css: optional CSS applied to the page. It is installed before
+            the page renders and re-applied just before capture so it overrides
+            the page's own styles.
 
     Returns:
         A PIL.Image, or None if the capture failed.
     """
+    custom_css = (custom_css or "").strip()
+
     browser = find_browser()
     if not browser:
         logger.error(
@@ -268,6 +310,12 @@ def take_settled_screenshot(target, dimensions, settle_seconds=5):
 
         socket_connection = _DevToolsSocket(websocket_url)
         socket_connection.command("Page.enable")
+        if custom_css:
+            # Install the override before the page's own styles are parsed so
+            # the first paint already looks right.
+            socket_connection.command("Page.addScriptToEvaluateOnNewDocument", {
+                "source": _custom_css_script(custom_css),
+            })
         socket_connection.command("Emulation.setDeviceMetricsOverride", {
             "width": dimensions[0],
             "height": dimensions[1],
@@ -286,6 +334,11 @@ def take_settled_screenshot(target, dimensions, settle_seconds=5):
 
         if settle_seconds > 0:
             time.sleep(settle_seconds)
+
+        if custom_css:
+            # Re-apply last so the override also beats stylesheets that the
+            # page added after load (and any later same-specificity rules).
+            _apply_custom_css(socket_connection, custom_css)
 
         result = socket_connection.command(
             "Page.captureScreenshot",
