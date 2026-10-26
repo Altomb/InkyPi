@@ -1,0 +1,26 @@
+<div class="form-group">
+    <label for="url" class="form-label">URL:</label>
+    <input type="text" id="url" name="url" placeholder="http://server:8480/kiosk#share=..." required class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="settle_seconds" class="form-label">Wait for content (seconds):</label>
+    <input type="number" id="settle_seconds" name="settle_seconds" class="form-input" min="0" max="30" step="0.5" value="5">
+    <span style="color: var(--text-primary);">Time given to a page that loads its content with JavaScript before the screenshot is taken. 0 behaves like the standard Screenshot plugin.</span>
+</div>
+
+<div class="form-group">
+    <span style="color: var(--text-primary);">Warning: Do not run with untrusted URLs, as it may pose a security risk. This may also fail if the website takes too long to load.</span>
+</div>
+
+<script>
+    // populate form values from plugin settings
+    document.addEventListener('DOMContentLoaded', () => {
+        if (loadPluginSettings) {
+            document.getElementById('url').value = pluginSettings.url;
+            if (pluginSettings.settle_seconds !== undefined && pluginSettings.settle_seconds !== '') {
+                document.getElementById('settle_seconds').value = pluginSettings.settle_seconds;
+            }
+        }
+    });
+</script>
