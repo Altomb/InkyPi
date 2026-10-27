@@ -1,4 +1,6 @@
 import json
+import os
+import signal
 import sys
 from pathlib import Path
 
@@ -42,3 +44,55 @@ def test_custom_css_is_encoded_safely():
     encoded = script.split("var css = ", 1)[1].split(";\n", 1)[0]
     assert json.loads(encoded) == css
     assert cdp_screenshot.STYLE_ELEMENT_ID in script
+
+
+class FakeProcess:
+    pid = 4321
+
+    def __init__(self):
+        self.waits = 0
+
+    def wait(self, timeout=None):
+        self.waits += 1
+        return 0
+
+
+class TestStopBrowser:
+
+    def _prepare(self, monkeypatch, running):
+        signals = []
+        monkeypatch.setattr(cdp_screenshot.os, "killpg", lambda pgid, sig: signals.append(sig))
+        monkeypatch.setattr(cdp_screenshot, "_process_is_running", lambda pid: running)
+        monkeypatch.setattr(cdp_screenshot.time, "sleep", lambda seconds: None)
+        # Make the graceful wait return immediately.
+        clock = iter(range(0, 1000, 10))
+        monkeypatch.setattr(cdp_screenshot.time, "time", lambda: next(clock))
+        return signals
+
+    def test_graceful_exit_still_clears_group(self, monkeypatch):
+        signals = self._prepare(monkeypatch, running=False)
+        process = FakeProcess()
+
+        cdp_screenshot._stop_browser(process, 1234)
+
+        # No SIGTERM needed, but the group is cleared before reaping.
+        assert signals == [signal.SIGKILL]
+        assert process.waits == 1
+
+    def test_hung_browser_gets_sigterm_then_sigkill(self, monkeypatch):
+        signals = self._prepare(monkeypatch, running=True)
+        process = FakeProcess()
+
+        cdp_screenshot._stop_browser(process, 1234)
+
+        assert signals == [signal.SIGTERM, signal.SIGKILL]
+        assert process.waits == 1
+
+
+class TestProcessIsRunning:
+
+    def test_current_process_is_running(self):
+        assert cdp_screenshot._process_is_running(os.getpid())
+
+    def test_unused_pid_is_not_running(self):
+        assert not cdp_screenshot._process_is_running(2 ** 22 + 12345)

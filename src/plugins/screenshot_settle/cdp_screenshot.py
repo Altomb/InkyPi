@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -243,6 +244,73 @@ def _apply_custom_css(socket_connection, css):
     time.sleep(0.2)
 
 
+GRACEFUL_SHUTDOWN_SECONDS = 5
+FORCED_SHUTDOWN_SECONDS = 5
+
+
+def _process_is_running(pid):
+    """Return True while the process is alive (a zombie counts as exited).
+
+    Used instead of process.wait() so the browser is not reaped before its
+    process group has been cleaned up: an unreaped pid, and therefore the group
+    id, cannot be handed to an unrelated process.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as stat_file:
+            stat = stat_file.read()
+    except OSError:
+        return False
+    state = stat.rsplit(b")", 1)[-1].split()[0]
+    return state not in (b"Z", b"X")
+
+
+def _wait_for_exit(pid, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline and _process_is_running(pid):
+        time.sleep(0.1)
+
+
+def _stop_browser(process, process_group, socket_connection=None):
+    """Stop Chromium and every process it spawned.
+
+    Chromium keeps the browser, renderer and GPU in separate processes, and
+    terminating only the browser can leave the others running. The browser is
+    therefore started as a session leader and its entire process group is
+    cleared before the browser is reaped.
+    """
+    if socket_connection:
+        try:
+            socket_connection.command("Browser.close")
+        except Exception:
+            pass
+        socket_connection.close()
+
+    if process is None or process_group is None:
+        return
+
+    # Give Chromium the chance to shut its own children down and reap them.
+    _wait_for_exit(process.pid, GRACEFUL_SHUTDOWN_SECONDS)
+
+    if _process_is_running(process.pid):
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        _wait_for_exit(process.pid, FORCED_SHUTDOWN_SECONDS)
+
+    # Clear any child that outlived the browser. This is still safe: the
+    # browser is an unreaped zombie, so the group id cannot have been reused.
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+    try:
+        process.wait(timeout=FORCED_SHUTDOWN_SECONDS)
+    except subprocess.TimeoutExpired:
+        logger.error("Chromium did not exit after SIGKILL.")
+
+
 def take_settled_screenshot(target, dimensions, settle_seconds=5, custom_css=None):
     """Screenshot target after its content has had time to settle.
 
@@ -294,6 +362,7 @@ def take_settled_screenshot(target, dimensions, settle_seconds=5, custom_css=Non
     ]
 
     process = None
+    process_group = None
     socket_connection = None
     image = None
     try:
@@ -301,7 +370,9 @@ def take_settled_screenshot(target, dimensions, settle_seconds=5, custom_css=Non
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
+        process_group = process.pid
 
         websocket_url = _wait_for_page_target(port)
         if not websocket_url:
@@ -355,14 +426,7 @@ def take_settled_screenshot(target, dimensions, settle_seconds=5, custom_css=Non
         logger.error(f"Failed to take settled screenshot: {error}")
 
     finally:
-        if socket_connection:
-            socket_connection.close()
-        if process and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        _stop_browser(process, process_group, socket_connection)
         shutil.rmtree(user_data_dir, ignore_errors=True)
 
     return image
